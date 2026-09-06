@@ -1,0 +1,84 @@
+name: build
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  pack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build module zip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "${{ runner.temp }}/ziptool"
+          mkdir -p "${{ runner.temp }}/dist"
+
+          # golang.org/x/mod/zip.CreateFromDir applies the module proxy's own
+          # inclusion rules, so the packed file set matches the published zip
+          # by construction. goutils v1.1.0 predates modules and ships no
+          # go.mod; the helper lives in a scratch dir outside the checkout so
+          # none is ever created inside the source tree.
+          cat > "${{ runner.temp }}/ziptool/create_mod.go" <<'CREATE_MOD_EOF'
+          package main
+
+          import (
+              "log"
+              "os"
+
+              "golang.org/x/mod/module"
+              "golang.org/x/mod/zip"
+          )
+
+          func main() {
+              if len(os.Args) != 5 {
+                  log.Fatal("usage: create_mod <module-path> <version> <source-dir> <output-zip>")
+              }
+              m := module.Version{Path: os.Args[1], Version: os.Args[2]}
+              f, err := os.Create(os.Args[4])
+              if err != nil {
+                  log.Fatal(err)
+              }
+              defer f.Close()
+              if err := zip.CreateFromDir(f, m, os.Args[3]); err != nil {
+                  log.Fatal(err)
+              }
+              log.Printf("created module zip: %s", os.Args[4])
+          }
+          CREATE_MOD_EOF
+
+          rm -rf "${{ runner.temp }}/pkgsrc"
+          cp -a "${{ github.workspace }}" "${{ runner.temp }}/pkgsrc"
+          # This workflow must not ship inside the module zip: upstream
+          # v1.1.0 contains no .github directory at all, so dropping the whole
+          # directory removes exactly what was added here and nothing else.
+          rm -rf "${{ runner.temp }}/pkgsrc/.github"
+
+          cd "${{ runner.temp }}/ziptool"
+          go mod init example.com/ziptool
+          go get golang.org/x/mod@v0.17.0
+
+          go run create_mod.go \
+            github.com/Masterminds/goutils \
+            v1.1.0 \
+            "${{ runner.temp }}/pkgsrc" \
+            "${{ runner.temp }}/dist/v1.1.0.zip"
+
+          unzip -l "${{ runner.temp }}/dist/v1.1.0.zip"
+
+      - name: Upload module zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-zip
+          path: ${{ runner.temp }}/dist/v1.1.0.zip
+          if-no-files-found: error

@@ -1,10 +1,25 @@
 language: go
 
+# Travis provisions Go through `go install golang.org/dl/goX.Y`, and that module
+# no longer carries a go1.6 or go1.7 package, so those two legs can no longer
+# obtain a toolchain at all. 1.8 is the oldest that still installs; 1.10 is the
+# release this version shipped against and 1.11 replaces the moving `tip` leg.
 go:
-  - 1.6
-  - 1.7
-  - 1.8
-  - tip
+  - "1.8"
+  - "1.10"
+  - "1.11"
+
+# goutils predates Go modules, so `go get` and `go test` only work from the
+# package's import path inside GOPATH — otherwise every leg aborts with "no
+# install location for directory ... outside GOPATH". Travis's own
+# `go_import_path:` no longer relocates the checkout, so the install step lays
+# out GOPATH itself and still runs the dependency fetch Travis would have run.
+# The `cd` carries into `script:` because Travis runs both in one shell.
+install:
+  - mkdir -p "${GOPATH}/src/github.com/Masterminds"
+  - ln -sfn "${TRAVIS_BUILD_DIR}" "${GOPATH}/src/github.com/Masterminds/goutils"
+  - cd "${GOPATH}/src/github.com/Masterminds/goutils"
+  - go get -v -t ./...
 
 script:
   - go test -v
